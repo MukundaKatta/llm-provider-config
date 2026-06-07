@@ -61,6 +61,34 @@ def test_provider_config_to_dict_empty_key():
     assert d["api_key"] == ""
 
 
+def test_provider_config_to_dict_includes_all_fields():
+    c = ProviderConfig(
+        provider_name="anthropic",
+        api_key="sk-real-key",
+        base_url="https://api.anthropic.com",
+        timeout_seconds=45.0,
+        max_retries=2,
+        extra_headers={"X-Trace": "1"},
+        notes="primary",
+    )
+    d = c.to_dict()
+    assert d["api_key"] == "***"
+    assert d["base_url"] == "https://api.anthropic.com"
+    assert d["timeout_seconds"] == 45.0
+    assert d["max_retries"] == 2
+    assert d["extra_headers"] == {"X-Trace": "1"}
+    assert d["notes"] == "primary"
+
+
+def test_provider_config_to_dict_copies_extra_headers():
+    headers = {"X-Trace": "1"}
+    c = ProviderConfig(provider_name="anthropic", extra_headers=headers)
+    d = c.to_dict()
+    d["extra_headers"]["X-Trace"] = "mutated"
+    # Mutating the returned dict must not affect the config's own headers.
+    assert c.extra_headers == {"X-Trace": "1"}
+
+
 def test_provider_config_repr_masks_key():
     c = ProviderConfig(provider_name="anthropic", api_key="sk-real-key")
     r = repr(c)
@@ -103,6 +131,13 @@ def test_bedrock_no_api_key_ok():
         api_key="",
         timeout_seconds=120.0,
     )
+    errors = [i for i in c.validate() if i.level == "error"]
+    assert not any(i.field == "api_key" for i in errors)
+
+
+def test_bedrock_api_key_optional_when_name_has_whitespace():
+    # provider_name is normalised (stripped) before the bedrock check.
+    c = ProviderConfig(provider_name="  bedrock  ", api_key="", timeout_seconds=120.0)
     errors = [i for i in c.validate() if i.level == "error"]
     assert not any(i.field == "api_key" for i in errors)
 
@@ -203,6 +238,29 @@ def test_from_env_unknown_provider():
     assert c.provider_name == "custom-provider"
 
 
+def test_from_env_groq_uses_provider_defaults():
+    env = {"GROQ_API_KEY": "gk-test"}
+    c = ProviderConfig.from_env("groq", env=env)
+    assert c.api_key == "gk-test"
+    assert "groq.com" in c.base_url
+    assert c.timeout_seconds == 30.0
+    assert c.max_retries == 2
+
+
+def test_from_env_bedrock_no_api_key():
+    c = ProviderConfig.from_env("bedrock", env={})
+    assert c.api_key == ""
+    assert c.timeout_seconds == 120.0
+    assert c.is_valid
+
+
+def test_from_env_case_insensitive_provider():
+    env = {"ANTHROPIC_API_KEY": "k", "ANTHROPIC_TIMEOUT": "90"}
+    c = ProviderConfig.from_env("ANTHROPIC", env=env)
+    assert c.provider_name == "anthropic"
+    assert c.timeout_seconds == 90.0
+
+
 # ---------------------------------------------------------------------------
 # ProviderConfig factory class methods
 # ---------------------------------------------------------------------------
@@ -298,6 +356,18 @@ def test_registry_validate_all():
     assert "anthropic" in results
     assert "openai" in results
     assert results["anthropic"] == []
+    assert results["openai"] == []
+
+
+def test_registry_validate_all_reports_issues():
+    r = ConfigRegistry(
+        [
+            ProviderConfig.for_anthropic(api_key=""),  # missing api_key -> error
+            ProviderConfig.for_openai(api_key="key"),  # ok
+        ]
+    )
+    results = r.validate_all()
+    assert any(i.field == "api_key" for i in results["anthropic"])
     assert results["openai"] == []
 
 

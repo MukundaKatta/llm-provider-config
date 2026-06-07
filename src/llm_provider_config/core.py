@@ -143,7 +143,7 @@ class ProviderConfig:
             )
 
         # API key required for all providers except bedrock (uses AWS creds)
-        if self.provider_name.lower() != "bedrock" and not self.api_key.strip():
+        if self.provider_name.strip().lower() != "bedrock" and not self.api_key.strip():
             issues.append(
                 ConfigIssue(
                     field="api_key",
